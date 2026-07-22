@@ -1,4 +1,4 @@
-# rancher-platform
+# rancher-platform-gcp
 
 > Use Rancher as a **platform** for provisioning and managing Kubernetes clusters through code.
 
