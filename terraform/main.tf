@@ -9,9 +9,11 @@ terraform {
 }
 
 provider "google" {
-  project = var.gcp_project_id
-  region  = var.gcp_region
-  zone    = var.gcp_zone
+  project     = var.gcp_project_id
+  region      = var.gcp_region
+# Se la chiave JSON viene passata come stringa via variabile di ambiente
+  credentials = var.GCP_CREDENTIALS_JSON != "" ? var.GCP_CREDENTIALS_JSON : null
+}
 }
 
 # ------------------------------------------------------------------------------

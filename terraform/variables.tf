@@ -1,3 +1,11 @@
+# --- GCP AUTHENTICATION (INJECTED VIA ENV VAR) ---
+variable "GCP_CREDENTIALS_JSON" {
+  description = "Contenuto JSON della chiave del Service Account GCP passato dalla piattaforma (TF_VAR_gcp_credentials_json)"
+  type        = string
+  sensitive   = true
+  default     = "" # Se vuota, il provider ripiega automaticamente su GOOGLE_APPLICATION_CREDENTIALS
+}
+
 # --- GCP PROJECT & LOCATION CONFIGURATION ---
 variable "gcp_project_id" {
   description = "ID del progetto GCP in cui verrà creata l'infrastruttura di demo"
