@@ -1,24 +1,30 @@
 output "rancher_public_ip" {
-  description = "Public Elastic IP of the Rancher management node"
-  value       = module.ec2.public_ip
-}
-
-output "rancher_public_dns" {
-  description = "Public DNS hostname of the Elastic IP"
-  value       = module.ec2.public_dns
+  description = "IP Pubblico Statico (External IP) assegnato all'istanza di management su GCP"
+  value       = google_compute_address.demo_public_ip.address
 }
 
 output "rancher_url" {
-  description = "Rancher UI URL (set DNS or /etc/hosts to this IP)"
-  value       = "https://${module.ec2.public_ip}"
+  description = "URL di accesso HTTPS diretto alla console Rancher / Harvester"
+  value       = "https://${google_compute_address.demo_public_ip.address}"
 }
 
 output "ssh_command" {
-  description = "SSH command to connect to the management node"
-  value       = "ssh ${var.ansible_user}@${module.ec2.public_ip}"
+  description = "Comando SSH formattato per la connessione rapida dell'operatore o SA"
+  value       = "ssh ${var.ssh_user}@${google_compute_address.demo_public_ip.address}"
+}
+
+output "session_metadata" {
+  description = "Payload JSON dei metadati di sessione consumato da n8n per le notifiche partner e il tracking del ROI"
+  value = {
+    prospect     = var.prospect_name_slug
+    blueprint    = var.blueprint_id
+    ttl_hours    = var.ttl_hours
+    cluster_ip   = google_compute_address.demo_public_ip.address
+    environment  = var.environment
+  }
 }
 
 output "ansible_next_step" {
-  description = "Command to run the Ansible playbook after terraform apply"
-  value       = "cd ../ansible && ./manage.sh deploy"
+  description = "Comando per scatenare il Data Seeding via Ansible con i parametri dinamici del prospect"
+  value       = "cd ../ansible && ./manage.sh deploy --extra-vars \"target_host=${google_compute_address.demo_public_ip.address} prospect=${var.prospect_name_slug} industry=${var.blueprint_id}\""
 }

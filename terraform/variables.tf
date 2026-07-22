@@ -1,94 +1,92 @@
-variable "aws_region" {
-  description = "AWS region to deploy into"
+# --- GCP PROJECT & LOCATION CONFIGURATION ---
+variable "gcp_project_id" {
+  description = "ID del progetto GCP in cui verrà creata l'infrastruttura di demo"
   type        = string
-  default     = "eu-west-1"
 }
 
-variable "availability_zone" {
-  description = "Availability zone override. Defaults to <region>a when empty."
+variable "gcp_region" {
+  description = "Regione GCP per le risorse regionali (Subnet, IP Statici Pubblici)"
   type        = string
-  default     = ""
+  default     = "europe-west3" # Frankfurt (scelta ottimale per bassa latenza in EU)
 }
 
-variable "project_name" {
-  description = "Short name used as prefix for all resource names and tags"
+variable "gcp_zone" {
+  description = "Zona GCP per le istanze di calcolo (deve supportare la nested virtualization se necessaria)"
   type        = string
-  default     = "rancher-platform"
+  default     = "europe-west3-a"
+}
+
+# --- DEMO GOVERNANCE & MULTI-TENANCY (Passati da Salesforce / n8n) ---
+variable "prospect_name_slug" {
+  description = "Slug del prospect (es. 'acme-corp') usato per naming isolato e tagging multi-tenant"
+  type        = string
+}
+
+variable "blueprint_id" {
+  description = "ID del blueprint di demo (es. 'vmw-to-harvester-migration')"
+  type        = string
+  default     = "vmw-to-harvester-migration"
+}
+
+variable "ttl_hours" {
+  description = "Durata massima dell'ambiente prima dell'esecuzione del kill-switch automatico (24/48h)"
+  type        = number
+  default     = 24
 }
 
 variable "environment" {
-  description = "Environment label applied as a tag (e.g. dev, staging, prod)"
+  description = "Etichetta di ambiente applicata come label GCP (es. dev, demo-sandbox)"
   type        = string
-  default     = "dev"
+  default     = "demo-sandbox"
 }
 
-variable "existing_vpc_id" {
-  description = "ID of an existing VPC to use. Leave empty to create a new VPC. Useful when at the AWS VPC limit."
-  type        = string
-  default     = ""
-}
-
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC"
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
+# --- NETWORKING CONFIGURATIONS ---
 variable "subnet_cidr" {
-  description = "CIDR block for the public subnet"
+  description = "Blocco CIDR per la subnetwork personalizzata GCP"
   type        = string
-  default     = "10.0.1.0/24"
-}
-
-variable "allowed_ssh_cidrs" {
-  description = "CIDRs allowed SSH (port 22). Should be your operator IP only."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = "10.0.10.0/24"
 }
 
 variable "allowed_admin_cidrs" {
-  description = "CIDRs allowed Rancher web UI (ports 80/443/6443). Should be your IP only."
+  description = "CIDR autorizzati ad accedere alla Web UI di Rancher/Harvester (porte 80, 443, 6443)"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
-variable "allowed_cluster_cidrs" {
-  description = <<-EOT
-    CIDRs for downstream CAPI cluster nodes (registration + webhook callbacks).
-    Typically the VPC CIDR(s) where your downstream clusters will run.
-    These are granted access to: 80, 443, 6443, 9345, 30000-32767, 8472/udp.
-  EOT
+variable "allowed_ssh_cidrs" {
+  description = "CIDR autorizzati per la connessione SSH (porta 22)"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
-variable "instance_type" {
-  description = "EC2 instance type for the Rancher management node"
+# --- COMPUTE & STORAGE SPECIFICATIONS ---
+variable "machine_type" {
+  description = "Tipo di istanza GCP equivalente a t3.xlarge AWS (minimo 4 vCPU, 16 GB RAM per RKE2 + Rancher Prime)"
   type        = string
-  default     = "t3.xlarge" # 4 vCPU, 16 GB RAM — minimum comfortable for RKE2 + Rancher
+  default     = "n2-standard-4"
 }
 
-variable "root_volume_size_gb" {
-  description = "Root EBS volume size in GiB"
+variable "boot_disk_size_gb" {
+  description = "Dimensione del disco di boot in GiB (pd-ssd o pd-balanced consigliati)"
   type        = number
   default     = 100
 }
 
-# SSH key — provide ONE of the two options below
+variable "enable_nested_virtualization" {
+  description = "Abilita la Nested Virtualization sull'istanza GCP (critica per demo SUSE Harvester / hypervisor)"
+  type        = bool
+  default     = true
+}
+
+# --- SSH & ACCESS CONTROL ---
+variable "ssh_user" {
+  description = "Utente SSH configurato sull'immagine Linux"
+  type        = string
+  default     = "suse-admin"
+}
+
 variable "public_key_path" {
-  description = "Path to local SSH public key to upload as an EC2 key pair. Leave empty if using key_name."
+  description = "Path della chiave SSH pubblica per l'accesso e la gestione automatizzata via Ansible"
   type        = string
   default     = "~/.ssh/id_rsa.pub"
-}
-
-variable "key_name" {
-  description = "Name of an existing EC2 key pair. Used when public_key_path is empty."
-  type        = string
-  default     = ""
-}
-
-variable "ansible_user" {
-  description = "SSH user for Ansible to connect as"
-  type        = string
-  default     = "ec2-user" # SLES default on AWS
 }

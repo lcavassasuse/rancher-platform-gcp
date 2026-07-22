@@ -1,67 +1,33 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TERRAFORM_INVENTORY="${SCRIPT_DIR}/../terraform/generated/hosts.yml"
+# --- CONFIGURAZIONE VARIABILI DI INGRESSO (Passate da n8n / env0) ---
+TARGET_HOST="${TARGET_HOST:-}"
+SSH_USER="${SSH_USER:-suse-admin}"
+SSH_KEY_PATH="${SSH_KEY_PATH:-~/.ssh/id_rsa}"
+PROSPECT_SLUG="${PROSPECT_SLUG:-acme-corp}"
+INDUSTRY_VERTICAL="${INDUSTRY_VERTICAL:-bfsi}"
 
-# --- Help/Usage ---
-usage() {
-    echo "Usage: $0 <command> [ansible-options]"
-    echo ""
-    echo "Commands:"
-    echo "  install    Install Ansible collections from requirements.yml"
-    echo "  deploy     Run the main deployment playbook."
-    echo "             Any extra arguments are passed to ansible-playbook."
-    echo "             Examples:"
-    echo "               ./manage.sh deploy                              # uses inventory/hosts.yml"
-    echo "               ./manage.sh deploy -i /path/to/custom-inv.yml  # any inventory"
-    echo "               ./manage.sh deploy -i ../terraform/generated/hosts.yml  # Terraform-provisioned AWS host"
-    echo "  destroy    Delete all clusters and cleanup kubeconfigs on all hosts."
-    echo "  status     Run cluster-status script on all hosts."
-    echo "  help       Show this help message."
-    echo ""
-    echo "Note: Ansible is a standalone building block. Terraform is one way to provision"
-    echo "a machine — but you can point this playbook at any host via -i or inventory/hosts.yml."
-}
-
-# --- Main Logic ---
-COMMAND=$1
-shift || true
-
-if [ -z "$COMMAND" ]; then
-    usage
+if [ -z "$TARGET_HOST" ]; then
+    echo "❌ Errore: TARGET_HOST non definito. Fornire l'IP pubblico dell'istanza GCP."
     exit 1
 fi
 
-case $COMMAND in
-    install)
-        echo ">>> Installing Ansible collections..."
-        cd "${SCRIPT_DIR}"
-        ansible-galaxy collection install -r requirements.yml
-        echo ">>> Installation complete."
-        ;;
-    deploy)
-        echo ">>> Running deployment playbook..."
-        cd "${SCRIPT_DIR}"
-        unset ANSIBLE_VAULT_PASSWORD_FILE
-        ansible-playbook main.yml "$@"
-        ;;
-    destroy)
-        echo ">>> Removing Rancher and cert-manager on all hosts..."
-        cd "${SCRIPT_DIR}"
-        ansible all -i inventory/hosts.yml -m shell -a "/usr/local/bin/cleanup-rancher" "$@"
-        ;;
-    status)
-        echo ">>> Getting status from all hosts..."
-        cd "${SCRIPT_DIR}"
-        ansible all -i inventory/hosts.yml -m shell -a "/usr/local/bin/cluster-status" "$@"
-        ;;
-    help|--help|-h)
-        usage
-        ;;
-    *)
-        echo "Error: Unknown command '$COMMAND'"
-        usage
-        exit 1
-        ;;
-esac
+echo "🚀 Avvio Data Seeding e Setup Rancher per Prospect: ${PROSPECT_SLUG} [Vertical: ${INDUSTRY_VERTICAL}]"
+
+# --- GENERAZIONE INVENTORY DINAMICO TEMPORANEO ---
+ANSIBLE_INVENTORY="/tmp/inventory_${PROSPECT_SLUG}.ini"
+cat <<EOF > "$ANSIBLE_INVENTORY"
+[rancher_nodes]
+${TARGET_HOST} ansible_user=${SSH_USER} ansible_ssh_private_key_file=${SSH_KEY_PATH} ansible_python_interpreter=/usr/bin/python3
+EOF
+
+# --- ESECUZIONE PLAYBOOK ANSIBLE ---
+export ANSIBLE_HOST_KEY_CHECKING=False
+
+ansible-playbook -i "$ANSIBLE_INVENTORY" site.yml \
+  --extra-vars "prospect_name=${PROSPECT_SLUG}" \
+  --extra-vars "industry_vertical=${INDUSTRY_VERTICAL}" \
+  --extra-vars "target_host=${TARGET_HOST}"
+
+echo "✅ Deployment Ansible completato con successo su GCP!"

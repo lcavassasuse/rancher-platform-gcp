@@ -1,87 +1,136 @@
 terraform {
-  required_version = ">= 1.6.0"
-
+  required_version = ">= 1.5.0"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.5"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
     }
   }
-
-  # Uncomment to store state in S3 (recommended for teams)
-  # backend "s3" {
-  #   bucket = "my-terraform-state"
-  #   key    = "rancher-platform/terraform.tfstate"
-  #   region = "eu-west-1"
-  # }
 }
 
-provider "aws" {
-  region = var.aws_region
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
+  zone    = var.gcp_zone
+}
 
-  default_tags {
-    tags = local.common_tags
+# ------------------------------------------------------------------------------
+# 1. NETWORKING: LOGICAL MULTI-TENANT ISOLATED VPC
+# ------------------------------------------------------------------------------
+resource "google_compute_network" "demo_vpc" {
+  name                    = "vpc-${var.prospect_name_slug}-${var.blueprint_id}"
+  auto_create_subnetworks = false
+  description             = "VPC isolata per la sessione di demo del prospect ${var.prospect_name_slug}"
+}
+
+resource "google_compute_subnetwork" "demo_subnet" {
+  name          = "sb-${var.prospect_name_slug}-${var.gcp_region}"
+  ip_cidr_range = var.subnet_cidr
+  region        = var.gcp_region
+  network       = google_compute_network.demo_vpc.id
+}
+
+# ------------------------------------------------------------------------------
+# 2. FIREWALL RULES: INGRESS / EGRESS CONTROL
+# ------------------------------------------------------------------------------
+# Ingress per la gestione amministrativa (SSH, Rancher UI / Harvester UI, K8s API)
+resource "google_compute_firewall" "allow_admin_access" {
+  name    = "fw-allow-admin-${var.prospect_name_slug}"
+  network = google_compute_network.demo_vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22", "80", "443", "6443"] # SSH, Web UI, K8s API
   }
+
+  source_ranges = var.allowed_admin_cidrs
+  target_tags   = ["rancher-management-node"]
 }
 
-locals {
-  common_tags = {
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "terraform"
+# Ingress per la comunicazione tra cluster downstream / nodi di demo
+resource "google_compute_firewall" "allow_cluster_internal" {
+  name    = "fw-allow-cluster-${var.prospect_name_slug}"
+  network = google_compute_network.demo_vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["9345", "8472", "30000-32767"] # RKE2 node join, VXLAN, NodePorts
   }
 
-  # Derive AZ from region if not explicitly set
-  availability_zone = var.availability_zone != "" ? var.availability_zone : "${var.aws_region}a"
+  allow {
+    protocol = "udp"
+    ports    = ["8472"] # Flannel / Canal VXLAN
+  }
+
+  source_ranges = ["10.0.0.0/8"]
+  target_tags   = ["rancher-management-node"]
 }
 
-module "vpc" {
-  source = "./modules/vpc"
-
-  name              = var.project_name
-  existing_vpc_id   = var.existing_vpc_id
-  vpc_cidr          = var.vpc_cidr
-  subnet_cidr       = var.subnet_cidr
-  availability_zone = local.availability_zone
-  tags              = local.common_tags
+# ------------------------------------------------------------------------------
+# 3. PUBLIC STATIC IP RESERVATION
+# ------------------------------------------------------------------------------
+resource "google_compute_address" "demo_public_ip" {
+  name        = "ip-${var.prospect_name_slug}"
+  region      = var.gcp_region
+  description = "IP pubblico statico riservato per accedere alla demo UI e Ansible execution"
 }
 
-module "security_groups" {
-  source = "./modules/security-groups"
+# ------------------------------------------------------------------------------
+# 4. COMPUTE ENGINE: RANCHER / HARVESTER NODE (WITH NESTED VIRTUALIZATION)
+# ------------------------------------------------------------------------------
+resource "google_compute_instance" "rancher_node" {
+  name         = "node-${var.prospect_name_slug}"
+  machine_type = var.machine_type
+  zone         = var.gcp_zone
 
-  name                  = var.project_name
-  vpc_id                = module.vpc.vpc_id
-  allowed_ssh_cidrs     = var.allowed_ssh_cidrs
-  allowed_admin_cidrs   = var.allowed_admin_cidrs
-  allowed_cluster_cidrs = var.allowed_cluster_cidrs
-  tags                  = local.common_tags
-}
+  tags = ["rancher-management-node"]
 
-module "ec2" {
-  source = "./modules/ec2"
+  # Boot Disk configurato per sostenere i carichi di K3s/RKE2 e immagini VM di mock
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
+      size  = var.boot_disk_size_gb
+      type  = "pd-ssd"
+    }
+  }
 
-  name                = var.project_name
-  subnet_id           = module.vpc.public_subnet_id
-  security_group_id   = module.security_groups.security_group_id
-  instance_type       = var.instance_type
-  root_volume_size_gb = var.root_volume_size_gb
-  public_key_path     = var.public_key_path
-  key_name            = var.key_name
-  tags                = local.common_tags
-}
+  # CRITICO PER DEMO SUSE VIRTUALIZATION / HARVESTER: Abilita KVM Nesting su GCP
+  advanced_machine_features {
+    enable_nested_virtualization = var.enable_nested_virtualization
+  }
 
-# Write a ready-to-use Ansible inventory into terraform/generated/ — never overwrites the
-# hand-edited ansible/inventory/hosts.yml so the Ansible role stays a standalone building block.
-resource "local_file" "ansible_inventory" {
-  filename        = "${path.module}/generated/hosts.yml"
-  file_permission = "0600"
-  content = templatefile("${path.module}/templates/hosts.yml.tftpl", {
-    public_ip    = module.ec2.public_ip
-    ansible_user = var.ansible_user
-    ssh_key_path = var.public_key_path != "" ? replace(var.public_key_path, ".pub", "") : "~/.ssh/id_rsa"
-  })
+  network_interface {
+    network    = google_compute_network.demo_vpc.id
+    subnetwork = google_compute_subnetwork.demo_subnet.id
+
+    access_config {
+      nat_ip = google_compute_address.demo_public_ip.address
+    }
+  }
+
+  metadata = {
+    ssh-keys = "${var.ssh_user}:${file(var.public_key_path)}"
+    # Cloud-init baseline script per preparare l'ambiente all'arrivo di Ansible
+    user-data = <<-EOF
+      #cloud-config
+      package_update: true
+      packages:
+        - curl
+        - iptables
+        - open-iscsi
+      runcmd:
+        - systemctl enable --now iscsid
+    EOF
+  }
+
+  # ----------------------------------------------------------------------------
+  # GOVERNANCE, AUDITING & AUTO-KILL SWITCH LABELS
+  # ----------------------------------------------------------------------------
+  labels = {
+    prospect     = var.prospect_name_slug
+    blueprint    = var.blueprint_id
+    ttl_hours    = tostring(var.ttl_hours)
+    environment  = var.environment
+    managed_by   = "opentofu-n8n-pipeline"
+  }
 }

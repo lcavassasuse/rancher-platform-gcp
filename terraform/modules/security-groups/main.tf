@@ -1,79 +1,36 @@
-resource "aws_security_group" "rancher" {
-  name        = "${var.name}-rancher-sg"
-  description = "Security group for Rancher management node"
-  vpc_id      = var.vpc_id
+# --- INGRESS REGENCY: ADMIN & DEMO OPERATOR ACCESS ---
+resource "google_compute_firewall" "allow_admin" {
+  name    = "fw-allow-admin-${var.prospect_slug}"
+  network = var.network_name
 
-  # SSH — your operator IP only
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_ssh_cidrs
+  description = "Permette l'accesso amministrativo SSH e Web UI per la demo"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22", "80", "443", "6443"] # SSH, HTTP/HTTPS, Kubernetes API
   }
 
-  # HTTP — redirect to HTTPS; open to all (Rancher is a public web service; cattle-cluster-agent
-  # pods in downstream clusters may route through NAT/IGW and appear with public source IPs)
-  ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  source_ranges = var.allowed_admin_cidrs
+  target_tags   = var.target_tags
+}
+
+# --- INGRESS REGENCY: DOWNSTREAM CLUSTER & INTER-NODE COMMUNICATION ---
+resource "google_compute_firewall" "allow_cluster_traffic" {
+  name    = "fw-allow-cluster-${var.prospect_slug}"
+  network = var.network_name
+
+  description = "Porte di comunicazione interne per nodi downstream RKE2 / Harvester CAPI"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["9345", "8472", "30000-32767"] # RKE2 Join, VXLAN overlay, NodePorts
   }
 
-  # HTTPS — Rancher UI/API + cluster-agent registration; open to all for the same reason
-  ingress {
-    description = "HTTPS (Rancher UI/API + cluster registration)"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  allow {
+    protocol = "udp"
+    ports    = ["8472"] # Canal / Flannel VXLAN
   }
 
-  # Kubernetes API — kubeconfig access (your IP) + CAPI reconciliation (downstream clusters)
-  ingress {
-    description = "Kubernetes API server"
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = concat(var.allowed_admin_cidrs, var.allowed_cluster_cidrs)
-  }
-
-  # RKE2 supervisor API — downstream clusters only
-  ingress {
-    description = "RKE2 supervisor"
-    from_port   = 9345
-    to_port     = 9345
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_cluster_cidrs
-  }
-
-  # NodePort range — Fleet + CAPI webhooks called by downstream clusters
-  ingress {
-    description = "NodePort services (Fleet/CAPI webhooks)"
-    from_port   = 30000
-    to_port     = 32767
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_cluster_cidrs
-  }
-
-  # VXLAN — overlay traffic from downstream cluster nodes
-  ingress {
-    description = "VXLAN overlay"
-    from_port   = 8472
-    to_port     = 8472
-    protocol    = "udp"
-    cidr_blocks = var.allowed_cluster_cidrs
-  }
-
-  # All outbound
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, { Name = "${var.name}-rancher-sg" })
+  source_ranges = var.allowed_cluster_cidrs
+  target_tags   = var.target_tags
 }

@@ -1,40 +1,27 @@
-variable "name" {
-  description = "Prefix applied to all resource names"
+variable "prospect_slug" {
+  description = "Slug del prospect per garantire la tracciabilità e isolamento naming"
   type        = string
 }
 
-variable "vpc_id" {
-  description = "VPC in which to create the security group"
+variable "network_name" {
+  description = "Nome della VPC GCP a cui associare le regole Firewall"
   type        = string
 }
 
-variable "allowed_ssh_cidrs" {
-  description = "CIDRs allowed SSH (port 22). Should be your operator IP only."
+variable "target_tags" {
+  description = "Target Tags applicati alle VM GCP per attivare le regole firewall"
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = ["rancher-management-node"]
 }
 
 variable "allowed_admin_cidrs" {
-  description = "CIDRs allowed Rancher web UI (ports 80/443). Should be your IP only."
+  description = "Range IP/CIDR autorizzati ad accedere all'interfaccia di amministrazione"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
 variable "allowed_cluster_cidrs" {
-  description = <<-EOT
-    CIDRs for downstream CAPI cluster nodes. These need to reach:
-      - 443   (Rancher registration / cluster-agent callbacks)
-      - 6443  (Kubernetes API — kubeconfig access and CAPI reconciliation)
-      - 9345  (RKE2 supervisor API)
-      - 30000-32767 (Fleet + CAPI webhook NodePorts)
-    Typically the VPC CIDR of each downstream cluster's AWS region.
-  EOT
+  description = "Range IP/CIDR autorizzati per la comunicazione di cluster e webhook callbacks"
   type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
-variable "tags" {
-  description = "Tags to apply to all resources"
-  type        = map(string)
-  default     = {}
+  default     = ["10.0.0.0/8", "0.0.0.0/0"]
 }

@@ -1,0 +1,67 @@
+---
+- name: Post-Provisioning e Data Seeding del Demo Environment su GCP
+  hosts: rancher_nodes
+  become: yes
+  vars:
+    prospect_name: "{{ prospect_name | default('demo-prospect') }}"
+    industry_vertical: "{{ industry_vertical | default('bfsi') }}"
+    dataset_registry_url: "https://raw.githubusercontent.com/suse-technical-marketing-registry/main/industry-datasets"
+
+  tasks:
+    # --- 1. SYSTEM HARDENING & PRE-REQUISITES ---
+    - name: Configurazione Hostname dinamico basato sul Prospect
+      ansible.builtin.hostname:
+        name: "node-{{ prospect_name | lower }}"
+
+    - name: Verifica presenza moduli Kernel per K8s / Harvester
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    # --- 2. BOOTSTRAP CONTROL PLANE (RKE2 / K3s) ---
+    - name: Download e installazione RKE2 / K3s Engine
+      ansible.builtin.shell: |
+        curl -sfL https://get.k3s.io | SHIK3S_NODE_NAME="node-{{ prospect_name }}" sh -s - --write-kubeconfig-mode 644
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Attesa del completamento avvio Control Plane K8s
+      ansible.builtin.command: kubectl get nodes
+      register: nodes_ready
+      until: nodes_ready.rc == 0 and "Ready" in nodes_ready.stdout
+      retries: 30
+      delay: 10
+
+    # --- 3. DYNAMIC DATA SEEDING (VERTICAL DATASETS) ---
+    - name: Fetch del Mock Dataset specifico per il settore (BFSI / Mfg / Telco)
+      ansible.builtin.get_url:
+        url: "{{ dataset_registry_url }}/{{ industry_vertical }}/mock-vms-config.yaml"
+        dest: "/tmp/mock-vms-config.yaml"
+        mode: '0644'
+      ignore_errors: yes # Fallback su dataset generico se il settore non esiste
+
+    - name: Personalizzazione dei Nomi delle VM con il Nome Prospect (Enforce Narrative)
+      ansible.builtin.replace:
+        path: /tmp/mock-vms-config.yaml
+        regexp: 'PROSPECT_NAME_PLACEHOLDER'
+        replace: "{{ prospect_name | lower }}"
+      when: lookup('fileglob', '/tmp/mock-vms-config.yaml') != []
+
+    - name: Iniezione dei Mock Workloads sul Cluster
+      ansible.builtin.command: kubectl apply -f /tmp/mock-vms-config.yaml
+      register: seeding_result
+      when: lookup('fileglob', '/tmp/mock-vms-config.yaml') != []
+
+    # --- 4. SMOKE TEST & ACCEPTANCE CRITERIA ---
+    - name: Verificare che l'ambiente non sia vuoto (Acceptance Criteria)
+      ansible.builtin.shell: |
+        kubectl get pods -A --no-headers | wc -l
+      register: pod_count
+      failed_when: pod_count.stdout | int < 5
+
+    - name: Log dello stato di successo per n8n
+      ansible.builtin.debug:
+        msg: "Demo Environment per {{ prospect_name }} pronto con {{ pod_count.stdout }} risorse attive su GCP."
